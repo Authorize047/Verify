@@ -10,7 +10,9 @@
     "url": "https://github.com/crock/netlify-functions-discord-utils/issues"
   },
   "dependencies": {
-    "axios": "^0.19.2"
+   "axios": "^1.6.0",
+   "mongoose": "^7.5.0"
+}
   },
   "devDependencies": {
     "netlify-lambda": "^1.6.3",
