@@ -1,34 +1,154 @@
-const axios = require('axios')
+const axios = require('axios');
+const mongoose = require('mongoose');
 
-exports.handler = async function(event, context) {
-  const baseUrl = `https://discordapp.com/api`
-
-  const data = {
-    grant_type: 'authorization_code',
-    code: event.queryStringParameters.code,
-    client_id: process.env.CLIENT_ID,
-    client_secret: process.env.CLIENT_SECRET,
-    scope: process.env.OAUTH_SCOPES,
-    redirect_uri: process.env.REDIRECT_URI,
-  }
-
-  const url = `${baseUrl}/oauth2/token`
-
-  const response = await axios({
-    method: 'post',
-    url,
-    data,
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  })
-
-  return {
-    statusCode: 200,
-    headers: {
-      'Cache-Control': 'no-cache',
-      'Access-Control-Allow-Origin': '*',
-    },
-    body: JSON.stringify({ tokens: response.data }),
-  }
+// MongoDB connection (reuse connection across calls)
+let cachedDb = null;
+async function connectToDatabase(uri) {
+  if (cachedDb) return cachedDb;
+  const conn = await mongoose.connect(uri, { useNewUrlParser: true, useUnifiedTopology: true });
+  cachedDb = conn;
+  return conn;
 }
+
+// VerifiedUser model (define schema inside or import)
+const VerifiedUserSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  guildId: { type: String, required: true },
+  accessToken: { type: String, required: true },
+  refreshToken: { type: String, required: true },
+  expiresAt: { type: Date, required: true },
+  verifiedAt: { type: Date, default: Date.now },
+  addedServers: { type: [String], default: [] }
+});
+VerifiedUserSchema.index({ userId: 1, guildId: 1 }, { unique: true });
+const VerifiedUser = mongoose.models.VerifiedUser || mongoose.model('VerifiedUser', VerifiedUserSchema);
+
+// GuildConfig model (if you need role assignment)
+const GuildConfigSchema = new mongoose.Schema({
+  guildId: { type: String, required: true, unique: true },
+  verifiedRoleId: { type: String, default: null }
+});
+const GuildConfig = mongoose.models.GuildConfig || mongoose.model('GuildConfig', GuildConfigSchema);
+
+exports.handler = async (event, context) => {
+  // Netlify functions: context.callbackWaitsForEmptyEventLoop = false to allow async DB
+  context.callbackWaitsForEmptyEventLoop = false;
+
+  const { code, state } = event.queryStringParameters || {};
+  if (!code || !state) {
+    return {
+      statusCode: 400,
+      body: 'Missing code or state parameter.',
+    };
+  }
+
+  const guildId = state;
+
+  // Get environment variables from Netlify dashboard
+  const {
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI, // This must be the public URL of this function
+    BOT_TOKEN,
+    MONGODB_URI,
+  } = process.env;
+
+  try {
+    // Connect to MongoDB
+    await connectToDatabase(MONGODB_URI);
+
+    // Exchange code for token
+    const tokenRes = await axios.post('https://discord.com/api/oauth2/token',
+      new URLSearchParams({
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: REDIRECT_URI,
+      }), {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
+
+    const { access_token, refresh_token, expires_in } = tokenRes.data;
+
+    // Get user info
+    const userRes = await axios.get('https://discord.com/api/users/@me', {
+      headers: { Authorization: `Bearer ${access_token}` },
+    });
+    const { id: userId, username } = userRes.data;
+
+    // Add user to guild
+    await axios.put(`https://discord.com/api/guilds/${guildId}/members/${userId}`,
+      { access_token },
+      { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
+    );
+
+    // Save verification record
+    await VerifiedUser.findOneAndUpdate(
+      { userId, guildId },
+      {
+        userId,
+        guildId,
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        expiresAt: new Date(Date.now() + expires_in * 1000),
+        verifiedAt: new Date(),
+      },
+      { upsert: true, new: true }
+    );
+
+    // Assign role if configured
+    const guildConfig = await GuildConfig.findOne({ guildId });
+    if (guildConfig && guildConfig.verifiedRoleId) {
+      try {
+        await axios.put(
+          `https://discord.com/api/guilds/${guildId}/members/${userId}/roles/${guildConfig.verifiedRoleId}`,
+          {},
+          { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
+        );
+      } catch (roleErr) {
+        console.error('Role assignment failed:', roleErr.message);
+      }
+    }
+
+    // Send DM (optional, requires user DM channel)
+    try {
+      await axios.post(
+        `https://discord.com/api/users/@me/channels`,
+        { recipient_id: userId },
+        { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
+      ).then(dm => {
+        return axios.post(
+          `https://discord.com/api/channels/${dm.data.id}/messages`,
+          { content: `✅ You have successfully verified in the server!` },
+          { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
+        );
+      });
+    } catch (dmErr) {
+      console.error('DM failed:', dmErr.message);
+    }
+
+    // Return success HTML page
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'text/html' },
+      body: `
+        <html>
+          <head><title>Verified!</title></head>
+          <body style="font-family:Arial; text-align:center; padding-top:50px;">
+            <h1>✅ Verification Successful!</h1>
+            <p>Thanks, ${username}! You have been verified and added to the server.</p>
+            <p>You can now close this tab and return to Discord.</p>
+          </body>
+        </html>
+      `,
+    };
+  } catch (err) {
+    console.error('Callback error:', err.response?.data || err.message);
+    return {
+      statusCode: 500,
+      body: '❌ Verification failed. Please try again later.',
+    };
+  }
+};
