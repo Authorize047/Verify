@@ -128,7 +128,18 @@ exports.handler = async (event, context) => {
       }
     }
 
-    // 6. Send DM
+    // 6. Fetch guild name for DM
+    let guildName = 'the server';
+    try {
+      const guildRes = await axios.get(`https://discord.com/api/guilds/${guildId}`, {
+        headers: { Authorization: `Bot ${BOT_TOKEN}` }
+      });
+      guildName = guildRes.data.name;
+    } catch (guildErr) {
+      console.error('❌ Failed to fetch guild name:', guildErr.message);
+    }
+
+    // 7. Send DM with enhanced message
     try {
       const dm = await axios.post(
         `https://discord.com/api/users/@me/channels`,
@@ -137,7 +148,7 @@ exports.handler = async (event, context) => {
       );
       await axios.post(
         `https://discord.com/api/channels/${dm.data.id}/messages`,
-        { content: `✅ You have successfully verified in the server!` },
+        { content: `✅ **Verified Successfully!**\n\n${username}, you have been successfully verified in **${guildName}**!` },
         { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
       );
       console.log('✅ DM sent');
@@ -145,16 +156,41 @@ exports.handler = async (event, context) => {
       console.error('❌ DM failed:', dmErr.response?.data || dmErr.message);
     }
 
+    // Return enhanced success HTML page
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'text/html' },
+      headers: { 'Content-Type': 'text/html; charset=utf-8' },
       body: `
-        <html>
-          <head><title>Verified!</title></head>
-          <body style="font-family:Arial; text-align:center; padding-top:50px;">
-            <h1>✅ Verification Successful!</h1>
-            <p>Thanks, ${username}! You have been verified and added to the server.</p>
-            <p>You can now close this tab and return to Discord.</p>
+        <!DOCTYPE html>
+        <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>✅ Verified!</title>
+            <style>
+              body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding-top: 50px;
+                background-color: #f0f2f5;
+              }
+              .container {
+                max-width: 500px;
+                margin: 0 auto;
+                background: white;
+                padding: 30px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              }
+              h1 { color: #28a745; }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>✅ Verification Successful!</h1>
+              <p>Thanks, ${username}! You have been verified and added to <strong>${guildName}</strong>.</p>
+              <p>You can now close this tab and return to Discord.</p>
+            </div>
           </body>
         </html>
       `,
