@@ -10,7 +10,7 @@ async function connectToDatabase(uri) {
   return conn;
 }
 
-// VerifiedUser model (define schema inside or import)
+// VerifiedUser model
 const VerifiedUserSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   guildId: { type: String, required: true },
@@ -23,7 +23,7 @@ const VerifiedUserSchema = new mongoose.Schema({
 VerifiedUserSchema.index({ userId: 1, guildId: 1 }, { unique: true });
 const VerifiedUser = mongoose.models.VerifiedUser || mongoose.model('VerifiedUser', VerifiedUserSchema);
 
-// GuildConfig model (if you need role assignment)
+// GuildConfig model
 const GuildConfigSchema = new mongoose.Schema({
   guildId: { type: String, required: true, unique: true },
   verifiedRoleId: { type: String, default: null }
@@ -31,7 +31,6 @@ const GuildConfigSchema = new mongoose.Schema({
 const GuildConfig = mongoose.models.GuildConfig || mongoose.model('GuildConfig', GuildConfigSchema);
 
 exports.handler = async (event, context) => {
-  // Netlify functions: context.callbackWaitsForEmptyEventLoop = false to allow async DB
   context.callbackWaitsForEmptyEventLoop = false;
 
   const { code, state } = event.queryStringParameters || {};
@@ -43,36 +42,36 @@ exports.handler = async (event, context) => {
   }
 
   const guildId = state;
-
-  // Get environment variables from Netlify dashboard
   const {
     CLIENT_ID,
     CLIENT_SECRET,
-    REDIRECT_URI, // This must be the public URL of this function
+    REDIRECT_URI,
     BOT_TOKEN,
     MONGODB_URI,
   } = process.env;
 
   try {
-    // Connect to MongoDB
     await connectToDatabase(MONGODB_URI);
 
-    // Exchange code for token
-    const tokenRes = await axios.post('https://discord.com/api/oauth2/token',
-      new URLSearchParams({
-        client_id: CLIENT_ID,
-        client_secret: CLIENT_SECRET,
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: REDIRECT_URI,
-      }), {
+    // ✅ FIX: Convert URLSearchParams to string
+    const params = new URLSearchParams({
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT_URI,
+    });
+
+    const tokenRes = await axios.post(
+      'https://discord.com/api/oauth2/token',
+      params.toString(), // 🔥 This ensures URL-encoded form data
+      {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       }
     );
 
     const { access_token, refresh_token, expires_in } = tokenRes.data;
 
-    // Get user info
     const userRes = await axios.get('https://discord.com/api/users/@me', {
       headers: { Authorization: `Bearer ${access_token}` },
     });
@@ -108,28 +107,26 @@ exports.handler = async (event, context) => {
           { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
         );
       } catch (roleErr) {
-        console.error('Role assignment failed:', roleErr.message);
+        console.error('Role assignment failed:', roleErr.response?.data || roleErr.message);
       }
     }
 
-    // Send DM (optional, requires user DM channel)
+    // Send DM
     try {
-      await axios.post(
+      const dm = await axios.post(
         `https://discord.com/api/users/@me/channels`,
         { recipient_id: userId },
         { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
-      ).then(dm => {
-        return axios.post(
-          `https://discord.com/api/channels/${dm.data.id}/messages`,
-          { content: `✅ You have successfully verified in the server!` },
-          { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
-        );
-      });
+      );
+      await axios.post(
+        `https://discord.com/api/channels/${dm.data.id}/messages`,
+        { content: `✅ You have successfully verified in the server!` },
+        { headers: { Authorization: `Bot ${BOT_TOKEN}` } }
+      );
     } catch (dmErr) {
-      console.error('DM failed:', dmErr.message);
+      console.error('DM failed:', dmErr.response?.data || dmErr.message);
     }
 
-    // Return success HTML page
     return {
       statusCode: 200,
       headers: { 'Content-Type': 'text/html' },
@@ -145,7 +142,12 @@ exports.handler = async (event, context) => {
       `,
     };
   } catch (err) {
-    console.error('Callback error:', err.response?.data || err.message);
+    // Log detailed error
+    console.error('Callback error:', {
+      message: err.message,
+      response: err.response?.data,
+      status: err.response?.status,
+    });
     return {
       statusCode: 500,
       body: '❌ Verification failed. Please try again later.',
