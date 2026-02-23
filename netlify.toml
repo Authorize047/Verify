@@ -1,19 +1,10 @@
 [build]
-  command = "npm run build"
-  functions = "dist/functions"
+  command = "echo 'No build needed'"
+  functions = "netlify/functions"
 
 [build.environment]
-  NODE_VERSION = "12"
+  NODE_VERSION = "18"   # Use a modern Node version
 
-[template.environment]
-  BOT_TOKEN = "discord bot token here"
-  CHANNEL_ID = "discord channel id for invite"
-  GUILD_ID = "discord guild id"
-  CLIENT_ID = ""
-  CLIENT_SECRET = ""
-  OAUTH_SCOPES = "identify"
-  REDIRECT_URI = "https://example.com/api/callback"
-  
 [[redirects]]
   from = "/api/*"
   to = "/.netlify/functions/:splat"
