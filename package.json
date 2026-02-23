@@ -10,9 +10,8 @@
     "url": "https://github.com/crock/netlify-functions-discord-utils/issues"
   },
   "dependencies": {
-   "axios": "^1.6.0",
-   "mongoose": "^7.5.0"
-}
+    "axios": "^1.6.0",
+    "mongoose": "^7.5.0"
   },
   "devDependencies": {
     "netlify-lambda": "^1.6.3",
@@ -21,7 +20,7 @@
   },
   "scripts": {
     "start": "netlify-lambda serve src/functions --config webpack.functions.js",
-    "build": "webpack --config webpack.functions.js"
+    "build": "webpack --config webpack.functions.js",
     "format": "prettier --trailing-comma es5 --no-semi --single-quote --write \"src/**/*.js\"",
     "postinstall": "netlify-lambda install"
   },
