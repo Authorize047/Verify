@@ -16,7 +16,8 @@
   "devDependencies": {
     "netlify-lambda": "^1.6.3",
     "prettier": "^1.19.1",
-    "webpack-node-externals": "^1.7.2"
+    "webpack-node-externals": "^1.7.2",
+    "webpack-cli": "^5.1.4"
   },
   "scripts": {
     "start": "netlify-lambda serve src/functions --config webpack.functions.js",
