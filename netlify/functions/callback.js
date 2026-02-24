@@ -27,6 +27,13 @@ const GuildConfigSchema = new mongoose.Schema({
 });
 const GuildConfig = mongoose.models.GuildConfig || mongoose.model('GuildConfig', GuildConfigSchema);
 
+// Global User model to track addedServers across all guilds
+const UserSchema = new mongoose.Schema({
+  userId: { type: String, required: true, unique: true },
+  addedServers: { type: [String], default: [] }
+});
+const User = mongoose.models.User || mongoose.model('User', UserSchema);
+
 exports.handler = async (event, context) => {
   context.callbackWaitsForEmptyEventLoop = false;
 
@@ -98,7 +105,7 @@ exports.handler = async (event, context) => {
       throw err;
     }
 
-    // 4. Save verification record
+    // 4. Save verification record (per guild)
     await VerifiedUser.findOneAndUpdate(
       { userId, guildId },
       {
@@ -113,7 +120,15 @@ exports.handler = async (event, context) => {
     );
     console.log('✅ Verification record saved');
 
-    // 5. Assign role if configured
+    // 5. Create or update global user document
+    await User.findOneAndUpdate(
+      { userId },
+      { $setOnInsert: { userId, addedServers: [] } },
+      { upsert: true }
+    );
+    console.log('✅ Global user record ensured');
+
+    // 6. Assign role if configured
     const guildConfig = await GuildConfig.findOne({ guildId });
     if (guildConfig && guildConfig.verifiedRoleId) {
       try {
@@ -128,7 +143,7 @@ exports.handler = async (event, context) => {
       }
     }
 
-    // 6. Fetch guild name for DM
+    // 7. Fetch guild name for DM
     let guildName = 'the server';
     try {
       const guildRes = await axios.get(`https://discord.com/api/guilds/${guildId}`, {
@@ -139,7 +154,7 @@ exports.handler = async (event, context) => {
       console.error('❌ Failed to fetch guild name:', guildErr.message);
     }
 
-    // 7. Send DM with enhanced message
+    // 8. Send DM with enhanced message
     try {
       const dm = await axios.post(
         `https://discord.com/api/users/@me/channels`,
